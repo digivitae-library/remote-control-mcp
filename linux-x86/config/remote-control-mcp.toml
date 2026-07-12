@@ -1,0 +1,22 @@
+[mcp]
+port = 18889
+bind = "127.0.0.1"
+
+[registry]
+port = 18890
+bind = "0.0.0.0"
+keep_alive_interval_secs = 30
+
+# 已注册/手动添加的 Worker 会话，启动时自动加载。
+# Worker 现在使用 HTTPS 与 AK 认证；缺少 ak/ca_cert_pem 的旧记录会被标记为不可达，
+# 需要通过 supervisor 重新注册或手动补全凭证。
+# [[workers]]
+# id = ""
+# name = "mcp-worker-1"
+# description = "本地主 Worker"
+# ip = "127.0.0.1"
+# port = 18888
+# mcp_address = "https://127.0.0.1:18888/mcp"
+# reachable = false
+# ak = ""
+# ca_cert_pem = ""
