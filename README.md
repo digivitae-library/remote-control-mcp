@@ -104,6 +104,84 @@ bin/
    ./start.sh status   # 查看状态
    ```
 
+## 使用 supervisor 启动 Worker
+
+在目标机器上，`supervisor` 负责读取 `config/default.toml` 中的 Worker 配置，自动启动并守护一个或多个 `worker` 进程。Worker 启动后会通过 HTTPS 对外提供 MCP 服务，supervisor 会周期性检查 Worker 健康状态并在崩溃时自动重启（当 `auto_restart = true` 时）。
+
+### 配置文件
+
+`config/default.toml` 示例：
+
+```toml
+[supervisor]
+check_interval_secs = 5
+
+[[workers]]
+name = "mcp-worker-1"
+ip = "127.0.0.1"
+port = 18888
+mcp_address = "https://127.0.0.1:18888/mcp"
+description = "本地主 Worker"
+auto_restart = true
+
+# 如需自动注册到 remote-control-mcp，取消下方注释并填写目标地址
+# [[remote_control_mcp]]
+# ip = "127.0.0.1"
+# port = 18890
+# refresh_interval_secs = 60
+```
+
+配置说明：
+
+- `[[workers]]`：定义一个 Worker。`name`、`ip`、`port` 为必填项；`mcp_address` 用于向 remote-control-mcp 注册；`auto_restart` 控制异常退出后是否自动重启。
+- `[[remote_control_mcp]]`：可选。配置后 supervisor 会将 Worker 信息主动推送到 remote-control-mcp 的注册端口（默认 18890），使其能够聚合该 Worker 的工具。
+
+### 启动方式
+
+#### 无界面模式（推荐用于服务器/后台运行）
+
+```bash
+# Linux / macOS
+./supervisor --no-ui
+```
+
+```powershell
+# Windows
+.\supervisor.exe --no-ui
+```
+
+无界面模式下，supervisor 会读取 `config/default.toml`，启动所有配置的 Worker，并进入守护循环，直到收到 Ctrl-C 信号后停止所有 Worker 并退出。
+
+#### 交互模式
+
+直接运行：
+
+```bash
+# Linux / macOS
+./supervisor
+```
+
+```powershell
+# Windows
+.\supervisor.exe
+```
+
+交互模式会显示一个文本菜单，允许在运行时查看状态、重新加载配置或关闭服务。
+
+### 首次启动说明
+
+- supervisor 首次运行时会自动在同级目录创建 `certs/` 文件夹，生成 CA 证书并为每个 Worker 签发 TLS 证书，用于 HTTPS 通信。
+- Worker 的标准输出与错误会写入 `logs/<worker_name>.log`。
+- supervisor 自身的运行日志在无界面模式下直接输出到控制台；交互模式下写入 `logs/supervisor.log`。
+
+### 与 remote-control-mcp 配合使用
+
+若希望 remote-control-mcp 能够发现并使用本机的 Worker，需要：
+
+1. 在 `config/default.toml` 中配置 `[[remote_control_mcp]]`，指向 remote-control-mcp 的注册地址（默认端口 `18890`）。
+2. 先启动 remote-control-mcp，再启动 supervisor。
+3. supervisor 启动后会立即注册 Worker，并每隔 `refresh_interval_secs` 秒刷新一次注册状态。
+
 ## MCP 服务说明
 
 ### Worker 端点
