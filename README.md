@@ -1,193 +1,146 @@
 # Remote Control MCP
 
-Remote Control MCP 是一套面向 AI Agent 的远程 MCP（Model Context Protocol）服务集合，支持在 Windows、Linux、macOS 上执行系统命令、管理 Python 环境，并通过统一的 MCP HTTP 端点对外提供工具能力。
+Remote Control MCP 是一套面向 AI Agent 的远程 MCP（Model Context Protocol）服务，支持在 Windows、Linux、macOS 上执行系统命令、管理 Python 环境，并通过统一的 MCP HTTP 端点对外提供工具能力。
 
 ## 功能特性
 
-- **跨平台运行**：支持 Windows x64/ARM64、Linux x86/x64/ARM64、macOS x64/ARM64。
-- **远程命令执行**：可在目标机器上执行 CMD、PowerShell、Bash、AppleScript 及 Python 脚本。
-- **Python 环境管理**：自动检测、安装 Python，更新 pip，安装 Python 包，查询 Python 环境信息。
-- **Worker 注册与管理**：支持多个 Worker 注册到 remote-control-mcp，统一对外暴露工具列表。
-- **安全通信**：Worker 与 remote-control-mcp 之间通过 HTTPS + AK（Access Key）进行认证通信。
-- **服务守护**：supervisor 负责启动、监控 Worker，支持自动重启。
+- **跨平台运行**：支持 Windows x86/x64/ARM64、Linux x86/x64/ARM64、macOS x64/ARM64
+- **远程命令执行**：可在目标机器上执行 CMD、PowerShell、Bash、AppleScript 及 Python 脚本
+- **Python 环境管理**：自动检测、安装 Python，更新 pip，安装 Python 包，查询 Python 环境信息
+- **Worker 注册与管理**：支持多个 Worker 注册到 remote-control-mcp，统一对外暴露工具列表
+- **安全通信**：Worker 与 RCM 之间通过 HTTPS + 双向 mTLS 证书认证通信；Worker 的 Access Key 使用加密传递
+- **服务守护**：supervisor 负责启动、监控 Worker，支持自动重启
+- **Worker 包分发**：RCM 可生成各平台可分发 Worker ZIP 包，自动合并 mTLS 证书，便于部署到不同目标机器
 
 ## 运行环境要求
 
 ### 操作系统
 
-- Windows 10/11（x64、ARM64）
+- Windows 10/11（x86、x64、ARM64）
 - Linux（x86、x64、ARM64）
 - macOS（x64、ARM64）
 
 ### 网络端口
 
-默认使用以下端口，安装时可根据实际情况修改：
-
 | 服务 | 默认地址 | 端口 | 说明 |
 | --- | --- | --- | --- |
-| Worker HTTPS | `0.0.0.0` | 18888 | Worker 对外提供 MCP HTTPS 服务 |
-| MCP HTTP | `127.0.0.1` | 18889 | remote-control-mcp 对外提供 MCP HTTP 服务 |
-| Worker 注册 | `0.0.0.0` | 18890 | remote-control-mcp 接收 Worker 注册 |
+| Worker MCP HTTPS | `0.0.0.0` | 18888 | Worker 对外提供 MCP HTTPS 服务（需客户端证书） |
+| RCM MCP HTTP | `127.0.0.1` | 18889 | remote-control-mcp 对外提供 MCP HTTP 服务 |
+| Worker 注册 HTTPS | `0.0.0.0` | 18890 | remote-control-mcp 接收 Worker 注册（需 mTLS 客户端证书） |
 
 ### 依赖
 
-- Worker 的 Python 相关工具（`execute_python`、`install_python`、`install_package`、`update_pip`、`get_python_info`）需要目标系统存在可用的 Python 环境，或授权 Worker 自动下载安装 Python。
-- 执行各类脚本工具时，目标系统需具备对应的解释器或运行环境（如 Windows 的 `cmd.exe`、`powershell`，Linux/macOS 的 `bash`，macOS 的 `osascript` 等）。
-
-## 目录结构
-
-```
-bin/
-├── install.ps1              # Windows 安装脚本（自动检测平台）
-├── install.sh               # Linux/macOS 安装脚本（自动检测平台）
-├── windows-x64/             # Windows x64 平台二进制包
-│   ├── supervisor.exe
-│   ├── worker.exe
-│   ├── remote-control-mcp.exe
-│   ├── config/default.toml
-│   ├── config/remote-control-mcp.toml
-│   └── install.ps1
-├── windows-arm64/           # Windows ARM64 平台二进制包
-├── linux-x86/               # Linux x86 平台二进制包
-├── linux-x64/               # Linux x64 平台二进制包
-├── linux-arm64/             # Linux ARM64 平台二进制包
-├── macos-x64/               # macOS x64 平台二进制包
-├── macos-arm64/             # macOS ARM64 平台二进制包
-└── macos-universal/         # macOS 双架构二进制包（ supervisor-x86_64 / supervisor-arm64 等）
-```
-
-各平台目录已包含运行所需的二进制文件与默认配置文件。根目录下的 `install.ps1` 与 `install.sh` 会根据当前系统自动选择对应平台目录进行安装。
+- Worker 的 Python 相关工具需要目标系统存在可用的 Python 环境，或授权 Worker 自动下载安装 Python
+- 执行各类脚本工具时，目标系统需具备对应的解释器（如 Windows 的 `cmd.exe`、`powershell`，Linux/macOS 的 `bash`，macOS 的 `osascript` 等）
 
 ## 部署安装
 
+安装脚本用于在当前机器上安装 RCM（remote-control-mcp）。安装脚本会复制所有平台目录、将当前平台的 RCM 部署到安装目录根、并生成启动脚本。
+
 ### Windows
 
-1. 进入与目标平台对应的目录（例如 `windows-x64`），或直接使用根目录的 `install.ps1`。
-2. 以管理员身份运行 PowerShell，执行：
+1. 进入 `bin/` 根目录或对应平台目录（例如 `windows-x64`）
+2. 运行安装脚本：
 
    ```powershell
    .\install.ps1
    ```
 
-3. 按向导提示选择：
-   - 安装路径（默认 `C:\Program Files\RemoteControlMCP`）
-   - Worker 服务端口（默认 `18888`）
-   - Worker 名称
-   - 是否自动重启
-   - 健康检查间隔
-4. 安装完成后，使用生成的启动脚本管理服务：
+3. 按提示选择安装目录（默认为当前目录）
+4. 安装完成后，运行启动脚本：
 
    ```powershell
-   .\start.ps1 start    # 启动
-   .\start.ps1 stop     # 停止
-   .\start.ps1 restart  # 重启
-   .\start.ps1 status   # 查看状态
+   .\start.cmd
    ```
+
+   RCM 将在当前终端显示交互菜单。按 `Ctrl+C` 或关闭终端可停止 RCM。
 
 ### Linux / macOS
 
-1. 进入与目标平台对应的目录（例如 `linux-x64` 或 `macos-universal`），或直接使用根目录的 `install.sh`。
-2. 执行安装脚本：
+1. 进入 `bin/` 根目录或对应平台目录
+2. 运行安装脚本：
 
    ```bash
    chmod +x install.sh
    ./install.sh
    ```
 
-3. 按向导提示选择安装路径、端口、Worker 名称等。
-4. 安装完成后，使用生成的启动脚本管理服务：
+3. 按提示选择安装目录（默认为当前目录）
+4. 安装完成后，运行启动脚本：
 
    ```bash
-   ./start.sh start    # 启动
-   ./start.sh stop     # 停止
-   ./start.sh restart  # 重启
-   ./start.sh status   # 查看状态
+   ./start.sh
    ```
 
-## 使用 supervisor 启动 Worker
+   RCM 将在当前终端显示交互菜单。按 `Ctrl+C` 或关闭终端可停止 RCM。
 
-在目标机器上，`supervisor` 负责读取 `config/default.toml` 中的 Worker 配置，自动启动并守护一个或多个 `worker` 进程。Worker 启动后会通过 HTTPS 对外提供 MCP 服务，supervisor 会周期性检查 Worker 健康状态并在崩溃时自动重启（当 `auto_restart = true` 时）。
+### 安装后的目录结构
 
-### 配置文件
-
-`config/default.toml` 示例：
-
-```toml
-[supervisor]
-check_interval_secs = 5
-
-[[workers]]
-name = "mcp-worker-1"
-ip = "127.0.0.1"
-port = 18888
-mcp_address = "https://127.0.0.1:18888/mcp"
-description = "本地主 Worker"
-auto_restart = true
-
-# 如需自动注册到 remote-control-mcp，取消下方注释并填写目标地址
-# [[remote_control_mcp]]
-# ip = "127.0.0.1"
-# port = 18890
-# refresh_interval_secs = 60
+```
+安装目录/
+├── rcm/                    # 当前平台的 RCM（直接可用）
+│   ├── remote-control-mcp[.exe]
+│   └── config/
+├── windows-x64/            # 所有平台目录（包含 rcm/ 和 worker/）
+├── linux-x64/
+├── ...
+└── start.cmd / start.sh
 ```
 
-配置说明：
+## 启动方式
 
-- `[[workers]]`：定义一个 Worker。`name`、`ip`、`port` 为必填项；`mcp_address` 用于向 remote-control-mcp 注册；`auto_restart` 控制异常退出后是否自动重启。
-- `[[remote_control_mcp]]`：可选。配置后 supervisor 会将 Worker 信息主动推送到 remote-control-mcp 的注册端口（默认 18890），使其能够聚合该 Worker 的工具。
-
-### 启动方式
-
-#### 无界面模式（推荐用于服务器/后台运行）
+### remote-control-mcp
 
 ```bash
 # Linux / macOS
-./supervisor --no-ui
-```
+./remote-control-mcp
 
-```powershell
 # Windows
-.\supervisor.exe --no-ui
+.\remote-control-mcp.exe
 ```
 
-无界面模式下，supervisor 会读取 `config/default.toml`，启动所有配置的 Worker，并进入守护循环，直到收到 Ctrl-C 信号后停止所有 Worker 并退出。
+交互模式提供以下菜单：
 
-#### 交互模式
+```
+[1] 自身配置 (MCP 端口、注册端口、保活间隔)
+[2] Worker 配置 (增删改查)
+[3] 查看当前 MCP 配置 JSON
+[4] 应用/重启提示
+[5] 重新初始化注册根证书 (Reinitialize CA)
+[6] 生成可分发 Worker 包 (Generate distributable Worker packages)
+[0] 退出
+```
 
-直接运行：
+### supervisor
 
 ```bash
 # Linux / macOS
 ./supervisor
-```
 
-```powershell
 # Windows
 .\supervisor.exe
 ```
 
-交互模式会显示一个文本菜单，允许在运行时查看状态、重新加载配置或关闭服务。
+交互模式提供以下菜单：
 
-### 首次启动说明
-
-- supervisor 首次运行时会自动在同级目录创建 `certs/` 文件夹，生成 CA 证书并为每个 Worker 签发 TLS 证书，用于 HTTPS 通信。
-- Worker 的标准输出与错误会写入 `logs/<worker_name>.log`。
-- supervisor 自身的运行日志在无界面模式下直接输出到控制台；交互模式下写入 `logs/supervisor.log`。
-
-### 与 remote-control-mcp 配合使用
-
-若希望 remote-control-mcp 能够发现并使用本机的 Worker，需要：
-
-1. 在 `config/default.toml` 中配置 `[[remote_control_mcp]]`，指向 remote-control-mcp 的注册地址（默认端口 `18890`）。
-2. 先启动 remote-control-mcp，再启动 supervisor。
-3. supervisor 启动后会立即注册 Worker，并每隔 `refresh_interval_secs` 秒刷新一次注册状态。
+```
+[1] 编辑配置 (Edit configuration)
+[2] 查看当前配置 (View configuration)
+[3] 启动/重新应用配置 (Apply & start)
+[4] 停止服务 (Stop)
+[5] 刷新 remote-control-mcp 注册 (Refresh registry)
+[6] 重置 AK 加密密钥 (Reset AK encryption key)
+[7] 手动轮换 AK (Rotate AK)
+[0] 退出 (Exit)
+```
 
 ## MCP 服务说明
 
 ### Worker 端点
 
 - 地址：`https://<worker_ip>:<worker_port>/mcp`
-- 说明：直接运行在目标机器上的 MCP 服务，提供本地系统命令执行、Python 环境管理、系统信息查询等能力。
+- 认证：HTTPS 双向 mTLS + Bearer AK
+- 说明：直接运行在目标机器上的 MCP 服务，提供本地系统命令执行、Python 环境管理、系统信息查询等能力
 
 Worker 原生工具列表：
 
@@ -207,7 +160,7 @@ Worker 原生工具列表：
 ### remote-control-mcp 端点
 
 - 地址：`http://<ip>:18889/mcp`
-- 说明：聚合多个 Worker 的 MCP 服务，对外提供统一工具入口，同时提供 Worker 管理工具。
+- 说明：聚合多个 Worker 的 MCP 服务，对外提供统一工具入口，同时提供 Worker 管理工具
 
 remote-control-mcp 自带管理工具：
 
@@ -231,20 +184,47 @@ remote-control-mcp 还会自动聚合所有 `reachable=true` 的 Worker 工具�
 }
 ```
 
-## 快速验证
+## Worker 分发部署
 
-安装并启动服务后，可向 remote-control-mcp 发送 `tools/list` 请求验证服务是否正常：
+RCM 启动后，可通过菜单 `[6] 生成可分发 Worker 包` 为各目标平台生成可部署的 Worker ZIP 包。
 
-```bash
-curl -X POST http://127.0.0.1:18889/mcp \
-  -H "Content-Type: application/json" \
-  -d '{
-    "jsonrpc": "2.0",
-    "method": "tools/list",
-    "id": 1
-  }'
-```
+### 生成步骤
 
-正常返回应包含 `list_workers`、`get_worker` 等管理工具，以及已注册 Worker 提供的工具。
+1. 启动 RCM（首次启动会自动生成 mTLS 证书）
+2. 在 RCM 交互菜单中选择 `[6]`
+3. 选择目标平台（支持多选，如 `1,2,5` 或 `all`）
+4. 指定输出目录（默认为 RCM 上级目录中的 `OUTPUT/`）
+5. RCM 自动为每个选中平台生成 `worker-{平台}.zip`（如 `worker-windows-x64.zip`）
 
+### ZIP 包内容
 
+每个 ZIP 包包含：
+- `supervisor` 二进制
+- `worker` 二进制
+- `config/default.toml`（supervisor 配置）
+- `config/rcm-mtls/`（已合并当前 RCM 的 mTLS 证书：`ca.pem`、`supervisor-client-cert.pem`、`supervisor-client-key.pem`）
+
+### 目标机器部署
+
+1. 将 ZIP 包复制到目标机器
+2. 解压到任意目录
+3. 编辑 `config/default.toml`，配置 RCM 注册地址：
+   ```toml
+   [[remote_control_mcp]]
+   ip = "<RCM所在机器IP>"
+   port = 18890
+   refresh_interval_secs = 60
+   ```
+4. 运行 supervisor：
+   ```bash
+   # Linux / macOS
+   ./supervisor
+
+   # Windows
+   .\supervisor.exe
+   ```
+5. supervisor 启动后会自动启动 Worker 并通过 HTTPS + mTLS 注册到 RCM
+
+---
+
+**注意**：本分发包仅包含可直接运行的二进制文件与安装脚本。新旧版本不能混用，请确保 RCM 和 Supervisor/Worker 使用同一版本的分发包。

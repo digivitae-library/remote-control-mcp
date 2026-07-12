@@ -1,7 +1,7 @@
 #!/bin/bash
 # Remote Control MCP - Installation Script
+# Installs RCM (remote-control-mcp) with all platform directories
 # Supports Linux and macOS
-# Provides text-based UI to configure and generate startup scripts
 
 set -e
 
@@ -13,25 +13,12 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-INSTALL_DIR=""
-SERVICE_PORT=""
-WORKER_NAME=""
-AUTO_RESTART=""
-CHECK_INTERVAL=""
-
 print_banner() {
     echo -e "${CYAN}"
-    echo "╔══════════════════════════════════════════════════════════╗"
-    echo "║         Remote Control MCP - Installation Wizard        ║"
-    echo "║                                                         ║"
-    echo "║   A dual-architecture MCP service for AI Agents         ║"
-    echo "╚══════════════════════════════════════════════════════════╝"
+    echo "  ============================================================"
+    echo "         Remote Control MCP - RCM Installation Wizard         "
+    echo "  ============================================================"
     echo -e "${NC}"
-}
-
-print_step() {
-    echo -e "\n${BLUE}[$1/$2]${NC} $3"
-    echo "────────────────────────────────────────────────────────────"
 }
 
 prompt_with_default() {
@@ -55,11 +42,16 @@ detect_platform() {
             case "$arch" in
                 x86_64)  echo "linux-x64" ;;
                 i686|i386) echo "linux-x86" ;;
+                aarch64) echo "linux-arm64" ;;
                 *) echo "linux-x64" ;;
             esac
             ;;
         Darwin)
-            echo "macos-universal"
+            case "$arch" in
+                x86_64) echo "macos-x64" ;;
+                arm64)  echo "macos-arm64" ;;
+                *)      echo "macos-arm64" ;;
+            esac
             ;;
         *)
             echo "unknown"
@@ -67,174 +59,108 @@ detect_platform() {
     esac
 }
 
+find_bin_root() {
+    local script_dir="$1"
+    local known_platforms="windows-x86 windows-x64 windows-arm64 linux-x86 linux-x64 linux-arm64 macos-x64 macos-arm64"
+    
+    for p in $known_platforms; do
+        if [ -d "$script_dir/$p/worker" ]; then
+            echo "$script_dir"
+            return
+        fi
+    done
+    
+    local parent=$(dirname "$script_dir")
+    for p in $known_platforms; do
+        if [ -d "$parent/$p/worker" ]; then
+            echo "$parent"
+            return
+        fi
+    done
+    
+    echo "$script_dir"
+}
+
 # ─── Main Installation Flow ─────────────────────────────────────────
 
 print_banner
 
 PLATFORM=$(detect_platform)
-echo -e "  Detected platform: ${GREEN}${PLATFORM}${NC}"
-echo -e "  OS: $(uname -s) $(uname -r)"
-echo -e "  Architecture: $(uname -m)"
-
 if [ "$PLATFORM" = "unknown" ]; then
-    echo -e "${RED}ERROR: Unsupported platform.${NC}"
+    echo -e "  ${RED}ERROR: Unsupported platform.${NC}"
     exit 1
 fi
 
-# Step 1: Installation directory
-print_step 1 5 "Installation Directory"
-INSTALL_DIR=$(prompt_with_default "Install path" "/opt/remote-control-mcp")
-
-# Step 2: Service port
-print_step 2 5 "Service Configuration"
-SERVICE_PORT=$(prompt_with_default "MCP service port" "18888")
-WORKER_NAME=$(prompt_with_default "Worker name" "mcp-worker-1")
-
-# Step 3: Supervisor settings
-print_step 3 5 "Supervisor Settings"
-AUTO_RESTART=$(prompt_with_default "Auto-restart on crash (true/false)" "true")
-CHECK_INTERVAL=$(prompt_with_default "Health check interval (seconds)" "5")
-
-# Step 4: Confirm
-print_step 4 5 "Configuration Summary"
-echo -e "  ${CYAN}Install Directory:${NC}  $INSTALL_DIR"
-echo -e "  ${CYAN}Platform:${NC}           $PLATFORM"
-echo -e "  ${CYAN}Service Port:${NC}       $SERVICE_PORT"
-echo -e "  ${CYAN}Worker Name:${NC}        $WORKER_NAME"
-echo -e "  ${CYAN}Auto Restart:${NC}       $AUTO_RESTART"
-echo -e "  ${CYAN}Check Interval:${NC}     ${CHECK_INTERVAL}s"
+echo -e "  Detected platform: ${GREEN}${PLATFORM}${NC}"
+echo -e "  OS: $(uname -s) $(uname -r)"
+echo -e "  Architecture: $(uname -m)"
 echo ""
-echo -en "  Proceed with installation? ${YELLOW}[Y/n]${NC}: "
-read -r confirm
-if [[ "$confirm" =~ ^[Nn] ]]; then
-    echo -e "${YELLOW}Installation cancelled.${NC}"
-    exit 0
-fi
 
-# Step 5: Install
-print_step 5 5 "Installing"
-
-# Create directory structure
-echo -e "  Creating directories..."
-mkdir -p "$INSTALL_DIR/config"
-mkdir -p "$INSTALL_DIR/logs"
-
-# Copy binaries from the same directory as this script
+# Determine bin root
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PLATFORM_DIR="$SCRIPT_DIR/$PLATFORM"
+BIN_ROOT=$(find_bin_root "$SCRIPT_DIR")
+echo -e "  Source directory: ${BIN_ROOT}"
+echo ""
 
-if [ ! -d "$PLATFORM_DIR" ]; then
-    # Try current directory
-    PLATFORM_DIR="$SCRIPT_DIR"
-fi
+# Step 1: Installation directory
+echo -e "  ${BLUE}[1/4]${NC} Installation Directory"
+INSTALL_DIR=$(prompt_with_default "Install path" "$SCRIPT_DIR")
+echo -e "  -> ${INSTALL_DIR}"
+echo ""
 
-if [ -f "$PLATFORM_DIR/supervisor" ] && [ -f "$PLATFORM_DIR/worker" ]; then
-    echo -e "  Copying binaries from ${PLATFORM_DIR}..."
-    cp "$PLATFORM_DIR/supervisor" "$INSTALL_DIR/supervisor"
-    cp "$PLATFORM_DIR/worker" "$INSTALL_DIR/worker"
-    chmod +x "$INSTALL_DIR/supervisor"
-    chmod +x "$INSTALL_DIR/worker"
-elif [ -f "$SCRIPT_DIR/supervisor" ] && [ -f "$SCRIPT_DIR/worker" ]; then
-    echo -e "  Copying binaries..."
-    cp "$SCRIPT_DIR/supervisor" "$INSTALL_DIR/supervisor"
-    cp "$SCRIPT_DIR/worker" "$INSTALL_DIR/worker"
-    chmod +x "$INSTALL_DIR/supervisor"
-    chmod +x "$INSTALL_DIR/worker"
+# Step 2: Copy all platform directories (if different from source)
+echo -e "  ${BLUE}[2/4]${NC} Copying platform directories"
+if [ "$INSTALL_DIR" != "$BIN_ROOT" ]; then
+    KNOWN_PLATFORMS="windows-x86 windows-x64 windows-arm64 linux-x86 linux-x64 linux-arm64 macos-x64 macos-arm64"
+    for p in $KNOWN_PLATFORMS; do
+        if [ -d "$BIN_ROOT/$p" ]; then
+            rm -rf "$INSTALL_DIR/$p"
+            cp -r "$BIN_ROOT/$p" "$INSTALL_DIR/$p"
+            echo "    $p -> copied"
+        fi
+    done
 else
-    echo -e "  ${YELLOW}Warning: Binaries not found in script directory.${NC}"
-    echo -e "  ${YELLOW}Please manually copy supervisor and worker to: $INSTALL_DIR${NC}"
+    echo "    Install path is same as source, skipping copy."
 fi
+echo ""
 
-# Generate config file
-echo -e "  Generating configuration file..."
-cat > "$INSTALL_DIR/config/default.toml" << EOF
-[supervisor]
-check_interval_secs = ${CHECK_INTERVAL}
+# Step 3: Copy current platform's rcm/ to install root
+echo -e "  ${BLUE}[3/4]${NC} Setting up RCM for $PLATFORM"
+RCM_SRC="$INSTALL_DIR/$PLATFORM/rcm"
+if [ ! -d "$RCM_SRC" ]; then
+    RCM_SRC="$BIN_ROOT/$PLATFORM/rcm"
+fi
+if [ -d "$RCM_SRC" ]; then
+    rm -rf "$INSTALL_DIR/rcm"
+    cp -r "$RCM_SRC" "$INSTALL_DIR/rcm"
+    echo "    RCM copied to $INSTALL_DIR/rcm"
+else
+    echo -e "    ${YELLOW}Warning: RCM not found for platform $PLATFORM${NC}"
+fi
+echo ""
 
-[[workers]]
-name = "${WORKER_NAME}"
-port = ${SERVICE_PORT}
-auto_restart = ${AUTO_RESTART}
-EOF
-
-# Generate startup script
-echo -e "  Generating startup script..."
-cat > "$INSTALL_DIR/start.sh" << 'STARTUP_HEADER'
+# Step 4: Create start.sh
+echo -e "  ${BLUE}[4/4]${NC} Creating start script"
+cat > "$INSTALL_DIR/start.sh" << 'STARTEOF'
 #!/bin/bash
-# Remote Control MCP - Startup Script
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
-
-STARTUP_HEADER
-
-cat >> "$INSTALL_DIR/start.sh" << EOF
-
-case "\${1:-start}" in
-    start)
-        echo "Starting Remote Control MCP..."
-        echo "  Config: \$SCRIPT_DIR/config/default.toml"
-        echo "  Port: ${SERVICE_PORT}"
-        nohup ./supervisor > logs/supervisor.log 2>&1 &
-        echo \$! > logs/supervisor.pid
-        echo "Started (PID: \$!)"
-        echo "Log: \$SCRIPT_DIR/logs/supervisor.log"
-        ;;
-    stop)
-        if [ -f logs/supervisor.pid ]; then
-            PID=\$(cat logs/supervisor.pid)
-            echo "Stopping Remote Control MCP (PID: \$PID)..."
-            kill \$PID 2>/dev/null
-            rm -f logs/supervisor.pid
-            echo "Stopped."
-        else
-            echo "No PID file found. Service may not be running."
-        fi
-        ;;
-    restart)
-        \$0 stop
-        sleep 2
-        \$0 start
-        ;;
-    status)
-        if [ -f logs/supervisor.pid ]; then
-            PID=\$(cat logs/supervisor.pid)
-            if kill -0 \$PID 2>/dev/null; then
-                echo "Running (PID: \$PID)"
-            else
-                echo "Not running (stale PID file)"
-                rm -f logs/supervisor.pid
-            fi
-        else
-            echo "Not running"
-        fi
-        ;;
-    *)
-        echo "Usage: \$0 {start|stop|restart|status}"
-        exit 1
-        ;;
-esac
-EOF
+rcm/remote-control-mcp
+STARTEOF
 chmod +x "$INSTALL_DIR/start.sh"
-
-# Generate stop script (convenience)
-cat > "$INSTALL_DIR/stop.sh" << 'EOF'
-#!/bin/bash
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-"$SCRIPT_DIR/start.sh" stop
-EOF
-chmod +x "$INSTALL_DIR/stop.sh"
+echo "    Created: $INSTALL_DIR/start.sh"
+echo ""
 
 # Done
+echo -e "${GREEN}  ============================================================${NC}"
+echo -e "${GREEN}          Installation Complete!                              ${NC}"
+echo -e "${GREEN}  ============================================================${NC}"
 echo ""
-echo -e "${GREEN}╔══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║          Installation Complete!                         ║${NC}"
-echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
+echo -e "  Install location:  ${CYAN}$INSTALL_DIR${NC}"
+echo -e "  RCM directory:     ${CYAN}$INSTALL_DIR/rcm${NC}"
 echo ""
-echo -e "  Install location: ${CYAN}$INSTALL_DIR${NC}"
-echo -e "  Configuration:    ${CYAN}$INSTALL_DIR/config/default.toml${NC}"
+echo -e "  Start RCM:  ${GREEN}$INSTALL_DIR/start.sh${NC}"
+echo -e "  To stop:    Ctrl+C or close terminal"
 echo ""
-echo -e "  ${GREEN}Start service:${NC}   $INSTALL_DIR/start.sh start"
-echo -e "  ${GREEN}Stop service:${NC}    $INSTALL_DIR/start.sh stop"
-echo -e "  ${GREEN}Check status:${NC}    $INSTALL_DIR/start.sh status"
-echo -e "  ${GREEN}View logs:${NC}       tail -f $INSTALL_DIR/logs/supervisor.log"
+echo "  After starting RCM, use menu [6] to generate distributable Worker packages."
 echo ""
