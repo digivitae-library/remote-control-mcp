@@ -152,6 +152,10 @@ Worker 原生工具列表：
 | `install_package` | 使用 pip 安装指定 Python 包 | 全平台 |
 | `update_pip` | 更新当前 Python 环境的 pip | 全平台 |
 | `install_python` | 检查并安装指定版本 Python（默认 3.11.0） | 全平台 |
+| `list_directory` | 枚举指定目录下的文件和文件夹，支持正则过滤 | 全平台 |
+| `create_directory` | 创建目录（递归） | 全平台 |
+| `upload_file` | 上传 base64 编码的文件到指定路径 | 全平台 |
+| `download_file` | 下载指定文件并以 base64 编码返回内容 | 全平台 |
 | `execute_cmd` | 执行 CMD / Batch 脚本 | Windows |
 | `execute_powershell` | 执行 PowerShell 脚本 | Windows |
 | `execute_bash` | 执行 Bash 脚本 | Linux / macOS |
