@@ -2,17 +2,58 @@
 check_interval_secs = 5
 ak_rotation_interval_secs = 3600  # 不设 = 禁用
 
+# 控制端口（主动监听模式使用，默认关闭）。
+# 开启后 remote-control-mcp 可连接此端口：
+#   - 用它自己的控制 AK 拉取「绑定到它」的 listen 模式 Worker；
+#   - 首次连接时用全局接入 AK 自动建档（见 bootstrap_enabled）。
+# 服务端证书由本机 CA 自签（certs/control-server-cert.pem），
+# remote-control-mcp 在首次接入时固定该 CA。
+# bootstrap_enabled = 是否允许未知的 remote-control-mcp 用全局接入 AK 自动接入。
+#   全局接入 AK 见 certs/bootstrap-ak.txt，可在 supervisor 菜单
+#   [1] 编辑配置 -> [1] 基本配置 中查看或重新生成；把它交给 RCM 即可零配置批量部署。
+# 每个 RCM 的专属控制 AK 见 certs/control-ak.json（自动生成，可在 RCM 管理中查看）。
+[supervisor.control]
+enabled = false
+bind = "0.0.0.0"
+port = 18891
+bootstrap_enabled = true
+
+# Worker 列表。
+# mode    = 该 Worker 的工作模式：
+#           listen  = 本机监听端口，等 remote-control-mcp 连接进来拉取；
+#           reverse = 本机主动连接 remote-control-mcp（适用于本机无可达地址）。
+# rcm     = 该 Worker 归属的 remote-control-mcp 名称（见下方 [[remote_control_mcp]].name）。
+#           留空 = 无归属：使用全局接入 AK 自动接入的 RCM 会把它划归给自己。
+#           一个 Worker 只能归属一个 RCM，避免多个 RCM 同时操作同一台机器。
+# enabled = 是否启动并纳入监控。
 [[workers]]
 name = "mcp-worker-1"
+# ip = 对外通告地址（写入 mcp_address 与证书 SAN，remote-control-mcp 按此地址回连）
 ip = "127.0.0.1"
+# bind = worker 进程实际监听地址，默认 0.0.0.0 表示监听所有网卡
+bind = "0.0.0.0"
 port = 18888
 mcp_address = "https://127.0.0.1:18888/mcp"
 description = "本地主 Worker"
 auto_restart = true
+mode = "listen"
+enabled = true
+# rcm = "rcm-1"
 
-# remote-control-mcp 主动注册目标（保留空数组表示不注册）
+# remote-control-mcp 列表（可配置多个；删除本段表示暂不接入）。
+# name    = 唯一标识，Worker 通过 [[workers]].rcm 绑定到它。
+# mode    = listen  : RCM 主动连接本机的控制端口。此时无需填写 ip/port/ak——
+#                     控制 AK 由本机生成并存于 certs/control-ak.json。
+#           reverse : 本机主动连接 RCM，需要 ip/port 与 RCM 的反向接入 AK
+#                     （可在 RCM 菜单 [4] 反向接入配置 中查看）。
+# enabled = 是否启用该通道。
+# 由 remote-control-mcp 菜单 [8] 生成的 Worker 分发包已按所选模式预置全部内容
+# （模式、绑定、AK、证书），目标机器解压后直接运行 supervisor 即可，无需手工配置。
 # [[remote_control_mcp]]
+# name = "rcm-1"
+# mode = "reverse"
+# enabled = true
 # ip = "127.0.0.1"
 # port = 18890
 # refresh_interval_secs = 60
-
+# ak = ""

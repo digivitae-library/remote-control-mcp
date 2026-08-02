@@ -3,13 +3,44 @@ port = 18889
 bind = "127.0.0.1"
 
 [registry]
+# 反向接入端口：反向代理模式下 supervisor / worker 主动连接到此端口（TLS + mTLS）
 port = 18890
 bind = "0.0.0.0"
 keep_alive_interval_secs = 30
 
-# 已注册/手动添加的 Worker 会话，启动时自动加载。
-# Worker 现在使用 HTTPS 与 AK 认证；缺少 ak/ca_cert_pem 的旧记录会被标记为不可达，
-# 需要通过 supervisor 重新注册或手动补全凭证。
+# 生成 Worker 分发包时复用的预置值，由程序自动写入。
+# preset_bootstrap_ak = 写入 listen 模式分发包的「全局接入 AK」。
+# 同一批分发包共用它，添加 supervisor 目标时会作为默认 AK 填入，
+# 因此批量部署时每台机器只需输入 IP。
+[packaging]
+preset_bootstrap_ak = ""
+
+# 主动监听模式：需要拉取的 supervisor 控制端口列表（可配置多个）。
+# ak            = 首次接入前填目标 supervisor 的「全局接入 AK」（其菜单
+#                 [1] 编辑配置 -> [1] 基本配置 中可查看，listen 分发包已内置）；
+#                 接入成功后会被自动替换为该 supervisor 下发的专属控制 AK。
+#                 AK 不会在网络上传输，双方只交换基于它的 HMAC 证明。
+# ca_pem        = 首次接入时固定的 supervisor CA，之后每次拉取都据此校验服务端。
+# bootstrapped  = 是否已完成自动接入（由程序维护）。
+# 可直接在 RCM 菜单 [3] Supervisor 管理 中增删改查与重新接入。
+# [[supervisors]]
+# name = "supervisor-1"
+# ip = "127.0.0.1"
+# port = 18891
+# ak = ""
+# poll_interval_secs = 30
+# enabled = true
+# ca_pem = ""
+# ca_fingerprint = ""
+# bootstrapped = false
+
+# 已接入的 Worker 会话快照，由程序自动写入与加载。
+# Worker 不再由 remote-control-mcp 手工维护：主动监听模式由 supervisor 控制端口拉取，
+# 反向代理模式由 supervisor / Worker 主动接入时注册。RCM 菜单 [2] Worker 管理 仅用于列举与查询。
+# hostname / host_ip 为 Worker 所在机器的计算机名与主机 IP，由其 supervisor 上报，
+# 用于区分不同机器上同名的 Worker（list_workers 与 tools/list 中均会体现）。
+# 下方示例仅用于说明字段含义，无需手工填写；缺少 ak/ca_cert_pem 的记录会被标记为不可达，
+# 需要由目标机器的 supervisor 重新上报。
 # [[workers]]
 # id = ""
 # name = "mcp-worker-1"
@@ -17,6 +48,9 @@ keep_alive_interval_secs = 30
 # ip = "127.0.0.1"
 # port = 18888
 # mcp_address = "https://127.0.0.1:18888/mcp"
+# hostname = ""
+# host_ip = ""
+# mode = "direct"
 # reachable = false
 # ak = ""
 # ca_cert_pem = ""

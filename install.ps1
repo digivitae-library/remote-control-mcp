@@ -4,6 +4,20 @@
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
+$KnownPlatforms = @(
+    "windows-x86", "windows-x64", "windows-arm64",
+    "linux-x86", "linux-x64", "linux-arm64",
+    "macos-x64", "macos-arm64", "macos-universal"
+)
+
+$script:Warnings = 0
+
+function Write-Warn {
+    param([string]$Message)
+    Write-Host "    Warning: $Message" -ForegroundColor Yellow
+    $script:Warnings++
+}
+
 function Write-Banner {
     Write-Host ""
     Write-Host "  ============================================================" -ForegroundColor Cyan
@@ -19,7 +33,7 @@ function Read-WithDefault {
     Write-Host ": " -NoNewline
     $result = Read-Host
     if ([string]::IsNullOrWhiteSpace($result)) { $result = $Default }
-    return $result
+    return $result.Trim().Trim('"')
 }
 
 function Get-Platform {
@@ -32,20 +46,29 @@ function Get-Platform {
     }
 }
 
+# Locate the directory that holds the per-platform directories. Supports being
+# run from bin/ itself, from a platform directory, or from a source checkout root
+# where the platform directories live under bin\.
 function Find-BinRoot {
     param([string]$ScriptDir)
-    $knownPlatforms = @("windows-x86","windows-x64","windows-arm64","linux-x86","linux-x64","linux-arm64","macos-x64","macos-arm64")
-    foreach ($p in $knownPlatforms) {
-        if (Test-Path "$ScriptDir\$p\worker") { return $ScriptDir }
-    }
     $parent = Split-Path -Parent $ScriptDir
-    foreach ($p in $knownPlatforms) {
-        if (Test-Path "$parent\$p\worker") { return $parent }
+    $candidates = @($ScriptDir, (Join-Path $ScriptDir "bin"))
+    if ($parent) {
+        $candidates += @($parent, (Join-Path $parent "bin"))
+    }
+    foreach ($candidate in $candidates) {
+        if (-not (Test-Path $candidate)) { continue }
+        foreach ($p in $KnownPlatforms) {
+            if ((Test-Path (Join-Path $candidate "$p\worker")) -or
+                (Test-Path (Join-Path $candidate "$p\rcm"))) {
+                return (Resolve-Path $candidate).Path
+            }
+        }
     }
     return $ScriptDir
 }
 
-# ─── Main Installation Flow ─────────────────────────────────────────
+# --- Main Installation Flow -----------------------------------------
 
 Write-Banner
 
@@ -62,25 +85,56 @@ $BinRoot = Find-BinRoot -ScriptDir $ScriptDir
 Write-Host "  Source directory: $BinRoot"
 Write-Host ""
 
+$foundAny = $false
+foreach ($p in $KnownPlatforms) {
+    if (Test-Path (Join-Path $BinRoot $p)) { $foundAny = $true; break }
+}
+if (-not $foundAny) {
+    Write-Host "  ERROR: No platform directories found under $BinRoot" -ForegroundColor Red
+    Write-Host "  Run this script from the bin\ directory of a release package."
+    exit 1
+}
+
 # Step 1: Installation directory
 Write-Host "  [1/4] Installation Directory" -ForegroundColor Blue
-$defaultPath = $ScriptDir
-$InstallPath = Read-WithDefault -Prompt "Install path" -Default $defaultPath
+$InstallPath = Read-WithDefault -Prompt "Install path" -Default $ScriptDir
+try {
+    if (-not (Test-Path $InstallPath)) {
+        New-Item -ItemType Directory -Path $InstallPath -Force | Out-Null
+    }
+    $InstallPath = (Resolve-Path $InstallPath).Path
+} catch {
+    Write-Host "  ERROR: Cannot create install directory: $InstallPath" -ForegroundColor Red
+    exit 1
+}
 Write-Host "  -> $InstallPath" -ForegroundColor Gray
 Write-Host ""
 
 # Step 2: Copy all platform directories (if different from source)
 Write-Host "  [2/4] Copying platform directories" -ForegroundColor Blue
 if ($InstallPath -ne $BinRoot) {
-    $knownPlatforms = @("windows-x86","windows-x64","windows-arm64","linux-x86","linux-x64","linux-arm64","macos-x64","macos-arm64")
-    foreach ($p in $knownPlatforms) {
-        $srcPlatform = "$BinRoot\$p"
-        if (Test-Path $srcPlatform) {
-            $dstPlatform = "$InstallPath\$p"
+    $copied = 0
+    foreach ($p in $KnownPlatforms) {
+        $srcPlatform = Join-Path $BinRoot $p
+        if (-not (Test-Path $srcPlatform)) { continue }
+        $dstPlatform = Join-Path $InstallPath $p
+        try {
             if (Test-Path $dstPlatform) { Remove-Item -Recurse -Force $dstPlatform }
             Copy-Item -Recurse $srcPlatform $dstPlatform
             Write-Host "    $p -> copied"
+            $copied++
+        } catch {
+            Write-Warn "failed to copy $p ($($_.Exception.Message))"
         }
+    }
+    if ($copied -eq 0) { Write-Warn "no platform directory was copied" }
+    $readme = Join-Path $BinRoot "README.md"
+    if (Test-Path $readme) {
+        Copy-Item -Force $readme (Join-Path $InstallPath "README.md")
+    }
+    $installScript = Join-Path $BinRoot "install.ps1"
+    if ((Test-Path $installScript) -and ($installScript -ne (Join-Path $InstallPath "install.ps1"))) {
+        Copy-Item -Force $installScript (Join-Path $InstallPath "install.ps1")
     }
 } else {
     Write-Host "    Install path is same as source, skipping copy."
@@ -89,17 +143,22 @@ Write-Host ""
 
 # Step 3: Copy current platform's rcm/ to install root
 Write-Host "  [3/4] Setting up RCM for $platform" -ForegroundColor Blue
-$rcmSrc = "$InstallPath\$platform\rcm"
-if (-not (Test-Path $rcmSrc)) {
-    $rcmSrc = "$BinRoot\$platform\rcm"
+$rcmSrc = $null
+foreach ($base in @($InstallPath, $BinRoot)) {
+    $candidate = Join-Path $base "$platform\rcm"
+    if (Test-Path $candidate) { $rcmSrc = $candidate; break }
 }
-if (Test-Path $rcmSrc) {
-    $rcmDst = "$InstallPath\rcm"
-    if (Test-Path $rcmDst) { Remove-Item -Recurse -Force $rcmDst }
-    Copy-Item -Recurse $rcmSrc $rcmDst
-    Write-Host "    RCM copied to $rcmDst"
+if ($rcmSrc) {
+    try {
+        $rcmDst = Join-Path $InstallPath "rcm"
+        if (Test-Path $rcmDst) { Remove-Item -Recurse -Force $rcmDst }
+        Copy-Item -Recurse $rcmSrc $rcmDst
+        Write-Host "    RCM copied to $rcmDst"
+    } catch {
+        Write-Warn "failed to copy RCM from $rcmSrc ($($_.Exception.Message))"
+    }
 } else {
-    Write-Host "    Warning: RCM not found for platform $platform" -ForegroundColor Yellow
+    Write-Warn "RCM not found for platform $platform"
 }
 Write-Host ""
 
@@ -108,9 +167,13 @@ Write-Host "  [4/4] Creating start script" -ForegroundColor Blue
 $startScript = @"
 @echo off
 cd /d "%~dp0"
-rcm\remote-control-mcp.exe
+if not exist "rcm\remote-control-mcp.exe" (
+    echo ERROR: rcm\remote-control-mcp.exe not found.
+    exit /b 1
+)
+rcm\remote-control-mcp.exe %*
 "@
-Set-Content -Path "$InstallPath\start.cmd" -Value $startScript -Encoding ASCII
+Set-Content -Path (Join-Path $InstallPath "start.cmd") -Value $startScript -Encoding ASCII
 Write-Host "    Created: $InstallPath\start.cmd"
 Write-Host ""
 
@@ -125,5 +188,9 @@ Write-Host ""
 Write-Host "  Start RCM:  " -NoNewline; Write-Host "$InstallPath\start.cmd" -ForegroundColor Green
 Write-Host "  To stop:    Ctrl+C or close terminal"
 Write-Host ""
-Write-Host "  After starting RCM, use menu [6] to generate distributable Worker packages."
+Write-Host "  After starting RCM, use the 'Generate distributable Worker packages' menu entry."
+if ($script:Warnings -gt 0) {
+    Write-Host ""
+    Write-Host "  $($script:Warnings) warning(s) reported above." -ForegroundColor Yellow
+}
 Write-Host ""
